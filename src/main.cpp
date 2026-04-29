@@ -38,7 +38,7 @@ Guideline only
 #define SD_MISO 13
 
 //========SD speed================
-#define SD_SPEED 80000000U // Max speed for SD card is 80MHz, but it may not work with all SD cards. In case of issues, lower speed to 4000000U (4MHz).
+#define SD_SPEED 80000000U // Max speed for SD card is 80MHz, but it may not work with all SD cards. In case of issues, lower speed to 40000000U (40MHz).
 
 //=======LED CTRL pin=============
 #define LED660 1  // LED 1 - 660nm wavelength
@@ -55,7 +55,7 @@ Guideline only
 
 TFT_eSPI tft = TFT_eSPI();
 
-float ADCRes {0.0008056640625};
+float ADCRes{0.0008056640625};
 
 XPT2046_Touchscreen ts(CS_PIN, TIRQ_PIN);
 
@@ -63,7 +63,8 @@ SPIClass SD_SPI(HSPI);
 
 File data;
 
-struct SensorData {
+struct SensorData
+{
   uint16_t Raw;
   uint8_t Led;
   uint16_t timestamp;
@@ -74,12 +75,15 @@ SensorData *Sensorbuffer = nullptr;
 size_t BufferSize = 0;
 size_t BufferIndex = 0;
 
-void SDsetup() {
-  if (!SD.begin(SD_CS, SD_SPI, SD_SPEED)) {
+void SDsetup()
+{
+  if (!SD.begin(SD_CS, SD_SPI, SD_SPEED))
+  {
     Serial.println("SD init fail.");
   }
   data = SD.open("/test.txt", FILE_WRITE);
-  if (!data){
+  if (!data)
+  {
     Serial.println("SD write failed");
     return;
   }
@@ -88,7 +92,8 @@ void SDsetup() {
   data.close();
 }
 
-void TFTsetup() {
+void TFTsetup()
+{
   tft.begin();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
@@ -98,8 +103,52 @@ void TFTsetup() {
   Serial.println("TS up");
 }
 
+bool SDCreateFile(const char *path, bool append = false)
+{
+  File file = SD.open(path, FILE_WRITE);
+  if (!file)
+  {
+    Serial.println("Failed to create file at:" + String(path));
+    return false;
+  }
+  if (append)
+  {
+    file.seek(file.size()); // Move to the end of the file for appending
+  }
+  file.close();
+  Serial.println("File created successfully");
+  return true;
+}
 
-void setup() {
+bool SDWriteRawData(const char *path, const String &data)
+{
+  File file = SD.open(path, FILE_WRITE);
+  if (!file)
+  {
+    Serial.println("Failed to open file for writing at:" + String(path));
+    return false;
+  }
+  file.println(data);
+  file.close();
+  Serial.println("Data written successfully");
+  return true;
+}
+
+String SDReadData(const char *path)
+{
+  File file = SD.open(path, FILE_READ);
+  if (!file)
+  {
+    Serial.println("Failed to open file for reading at:" + String(path));
+    return "";
+  }
+  String content = file.readString();
+  file.close();
+  return content;
+}
+
+void setup()
+{
   Serial.begin(115200);
 
   psramInit();
@@ -107,11 +156,12 @@ void setup() {
   SDsetup();
   TFTsetup();
 
-
-  if(psramFound()) {
+  if (psramFound())
+  {
     Serial.println("PSram up");
   }
-  else {
+  else
+  {
     Serial.println("PSram not found");
   }
 
@@ -121,35 +171,13 @@ void setup() {
 
   Sensorbuffer = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
 
-  if (Sensorbuffer == nullptr) {
+  if (Sensorbuffer == nullptr)
+  {
     Serial.println("Faliure to allocate to PSram");
-
   }
-
 }
 
-void loop() {
+void loop()
+{
   Serial.println("Go Fuck Yourself!");
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
