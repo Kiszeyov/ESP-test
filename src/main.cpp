@@ -38,7 +38,7 @@ Guideline only
 #define SD_MISO 13
 
 //========SD speed================
-#define SD_SPEED 80000000U // Max speed for SD card is 80MHz, but it may not work with all SD cards. In case of issues, lower speed to 40000000U (40MHz).
+#define SD_SPEED 40000000U // Max speed for SD card is 80MHz, but it may not work with all SD cards. In case of issues, lower speed to 40000000U (40MHz).
 
 //=======LED CTRL pin=============
 #define LED660 1  // LED 1 - 660nm wavelength
@@ -46,6 +46,12 @@ Guideline only
 #define LED810 12 // LED 3 - 810nm wavelength
 #define LED850 13 // LED 4 - 850nm wavelength
 #define LED940 26 // LED 5 - 940nm wavelength
+
+#define LED660c 128 // LED current setting 0 - 256
+#define LED770c 128 // LED current setting 0 - 256
+#define LED810c 128 // LED current setting 0 - 256
+#define LED850c 128 // LED current setting 0 - 256
+#define LED940c 128 // LED current setting 0 - 256
 
 //===========IO pins==============
 #define DAC1 25
@@ -55,7 +61,7 @@ Guideline only
 
 TFT_eSPI tft = TFT_eSPI();
 
-float ADCRes{0.0008056640625};
+float ADCRes{0.0008056640625}; // ADC resolution for 12-bit ADC (3.3V / 4096)
 
 XPT2046_Touchscreen ts(CS_PIN, TIRQ_PIN);
 
@@ -63,16 +69,18 @@ SPIClass SD_SPI(HSPI);
 
 File data;
 
+const int headnum = 5;
+
+const String HeadNames[7] = {"LED660", "LED770", "LED810", "LED850", "LED940", "SpO2", "tempdiff"};
+
 struct SensorData
 {
-  uint16_t Raw;
-  uint8_t Led;
-  uint16_t timestamp;
   float volt;
+  uint8_t Led;
 };
 
 SensorData *Sensorbuffer = nullptr;
-size_t BufferSize = 0;
+size_t BufferSize = 100;
 size_t BufferIndex = 0;
 
 void SDsetup()
@@ -147,6 +155,72 @@ String SDReadData(const char *path)
   return content;
 }
 
+void cvsInit(const char *path, const String &headers, size_t numHeaders)
+{
+  if (!SDCreateFile(path))
+  {
+    Serial.println("Failed to create CSV file");
+    return;
+  }
+  String headerLine;
+  for (size_t i = 0; i < numHeaders; ++i)
+  {
+    headerLine += headers + (i < numHeaders - 1 ? "," : "");
+  }
+  if (!SDWriteRawData(path, headerLine))
+  {
+    Serial.println("Failed to write CSV headers");
+    return;
+  }
+  Serial.println("CSV file initialized successfully");
+}
+
+void LEDtest()
+{
+  for (int i = 0; i < 5; ++i)
+  {
+    switch (i)
+    {
+    case 0:
+      digitalWrite(LED660, HIGH);
+      Serial.println(ADC1Ph);
+      delay(500);
+      break;
+    case 1:
+      digitalWrite(LED660, LOW);
+      digitalWrite(LED770, HIGH);
+      Serial.println(ADC1Ph);
+      delay(500);
+      break;
+    case 2:
+      digitalWrite(LED770, LOW);
+      digitalWrite(LED810, HIGH);
+      Serial.println(ADC1Ph);
+      delay(500);
+      break;
+    case 3:
+      digitalWrite(LED810, LOW);
+      digitalWrite(LED850, HIGH);
+      Serial.println(ADC1Ph);
+      delay(500);
+      break;
+    case 4:
+      digitalWrite(LED850, LOW);
+      digitalWrite(LED940, HIGH);
+      Serial.println(ADC1Ph);
+      delay(500);
+      break;
+    default:
+      Serial.println("LED test error");
+      break;
+    }
+  }
+}
+
+void LEDdrive()
+{
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -167,17 +241,17 @@ void setup()
 
   delay(1000);
 
-  BufferSize = 100;
-
   Sensorbuffer = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
 
   if (Sensorbuffer == nullptr)
   {
     Serial.println("Faliure to allocate to PSram");
   }
+  Serial.println("LED test begins");
 }
 
 void loop()
 {
-  Serial.println("Go Fuck Yourself!");
+
+  LEDtest();
 }
