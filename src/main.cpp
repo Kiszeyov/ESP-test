@@ -177,6 +177,7 @@ void cvsInit(const char *path, const String &headers, size_t numHeaders)
 
 void LEDtest()
 {
+  analogWrite(DAC1, 255);
   for (int i = 0; i < 5; ++i)
   {
     switch (i)
@@ -215,6 +216,7 @@ void LEDtest()
       break;
     }
   }
+  analogWrite(DAC1, 0);
 }
 
 void LEDdrive()
