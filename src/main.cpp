@@ -81,13 +81,15 @@ File data;
 
 TaskHandle_t SensorTaskHandle = NULL;
 TaskHandle_t TemperatureUpdateTaskHandle = NULL;
+TaskHandle_t SPO2UpdateTaskHandle = NULL;
 
 const int headnum = 5;
 const String HeadNames[5] = {"LED660", "LED770", "LED810", "LED850", "LED940"};
 
 struct SensorData
 {
-  float volt;
+  float AC;
+  float DC;
 };
 
 SensorData *SENS660 = nullptr;
@@ -233,7 +235,7 @@ void cvsInit(const char *path, const String &headers, size_t numHeaders)
   Serial.println("CSV file initialized successfully");
 }
 
-void LEDCTRL(void *param)
+void FullTest(void *param)
 {
   for (;;)
   {
@@ -245,23 +247,28 @@ void LEDCTRL(void *param)
     {
       analogWrite(LEDDAC, L660C);
       digitalWrite(LED660, HIGH);
-      SENS660[SENS660Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS660[SENS660Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS660[SENS660Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
       digitalWrite(LED660, LOW);
       analogWrite(LEDDAC, L770C);
       digitalWrite(LED770, HIGH);
-      SENS770[SENS770Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS770[SENS770Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS770[SENS770Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
       digitalWrite(LED770, LOW);
       analogWrite(LEDDAC, L810C);
       digitalWrite(LED810, HIGH);
-      SENS810[SENS810Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS810[SENS810Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS810[SENS810Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
       digitalWrite(LED810, LOW);
       analogWrite(LEDDAC, L850C);
       digitalWrite(LED850, HIGH);
-      SENS850[SENS850Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS850[SENS850Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS850[SENS850Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
       digitalWrite(LED850, LOW);
       analogWrite(LEDDAC, L940C);
       digitalWrite(LED940, HIGH);
-      SENS940[SENS940Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS940[SENS940Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      SENS940[SENS940Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
       digitalWrite(LED940, LOW);
     }
     isRunning = false;              // Set the flag to indicate that the sensor task has completed its readings
@@ -283,7 +290,28 @@ void Termal(void *param)
       return;
     }
     Tb = analogRead(ADC2T) * ADCRes * 100.0; // Convert ADC reading to temperature in Celsius // needs tweaking
-    vTaskDelay(500 / portTICK_PERIOD_MS);    // Delay for 1 second before the next measurement
+    vTaskDelay(500 / portTICK_PERIOD_MS);    // Delay for 0.5 second before the next measurement
+  }
+}
+
+void SPO2Update(void *param)
+{
+  float L660{0.0};
+  float L940{0.0};
+  for (;;)
+  {
+    analogWrite(LEDDAC, L660C);
+    digitalWrite(LED660, HIGH);
+    L660 = (analogRead(ADC1Ph) * ADCRes)/(analogRead(DAC2)*ADCRes); // Convert ADC reading to voltage in mV
+    digitalWrite(LED660, LOW);
+    analogWrite(LEDDAC, L940C);
+    digitalWrite(LED940, HIGH);
+    L940 = (analogRead(ADC1Ph) * ADCRes)/(analogRead(DAC2)*ADCRes); // Convert ADC reading to voltage in mV
+    digitalWrite(LED940, LOW);
+
+      // Placeholder for SpO2 calculation logic and display/storage
+
+    vTaskDelay(500 / portTICK_PERIOD_MS); // Delay for 0.5 second before the next update
   }
 }
 
@@ -321,13 +349,21 @@ void setup()
   // =============================================
 
   xTaskCreatePinnedToCore(
-      LEDCTRL,
-      "SensorTask",
+      FullTest,
+      "FullSensorTask",
       4096,
       NULL,
       0,
       &SensorTaskHandle,
       0);
+
+  xTaskCreate(
+      SPO2Update,
+      "SPO2UpdateTask",
+      4096,
+      NULL,
+      1,
+      &SPO2UpdateTaskHandle);
 
   xTaskCreate(
       Termal,
