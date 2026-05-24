@@ -48,14 +48,15 @@ Guideline only
 #define LED850 13 // LED 4 - 850nm wavelength
 #define LED940 26 // LED 5 - 940nm wavelength
 
-#define LED660c 128 // LED current setting 0 - 256
-#define LED770c 128 // LED current setting 0 - 256
-#define LED810c 128 // LED current setting 0 - 256
-#define LED850c 128 // LED current setting 0 - 256
-#define LED940c 128 // LED current setting 0 - 256
+// LED control voltages in binary (0-255) for 8-bit DAC
+const int L660C{128};
+const int L770C{128};
+const int L810C{128};
+const int L850C{128};
+const int L940C{128};
 
 //===========IO pins==============
-#define DAC1 25
+#define LEDDAC 25
 #define DAC2 26
 #define ADC1Ph 34
 #define ADC2T 35
@@ -67,10 +68,10 @@ SensirionI2cSts3x Tsensor;
 static char errorMessage[64];
 static int16_t error;
 
-const float ADCRes{0.0008056640625}; // ADC resolution for 12-bit ADC (3.3V / 4096)
-bool isRunning = false;              // controls the start and end of the sensor task
-float Ta{0.0};                       // band temperature.
-float Tb{0.0};                       // finger temperature.
+const float ADCRes{0.8056640625}; // ADC resolution for 12-bit ADC (3.3V / 4096) in mV
+bool isRunning = false;           // controls the start and end of the sensor task
+float Ta{0.0};                    // band temperature.
+float Tb{0.0};                    // finger temperature.
 
 XPT2046_Touchscreen ts(CS_PIN, TIRQ_PIN);
 
@@ -82,7 +83,7 @@ TaskHandle_t SensorTaskHandle = NULL;
 TaskHandle_t TemperatureUpdateTaskHandle = NULL;
 
 const int headnum = 5;
-const String HeadNames[7] = {"LED660", "LED770", "LED810", "LED850", "LED940", "SpO2", "tempdiff"};
+const String HeadNames[5] = {"LED660", "LED770", "LED810", "LED850", "LED940"};
 
 struct SensorData
 {
@@ -238,50 +239,34 @@ void LEDCTRL(void *param)
   {
     if (!isRunning)
     {
-      vTaskSuspend(SensorTaskHandle); // Task selfterminates when done
+      vTaskSuspend(SensorTaskHandle); // pre check
     }
-  }
-
-  /*analogWrite(DAC1, 255);
-  for (int i = 0; i < 5; ++i)
-  {
-    switch (i)
+    for (int i = BufferSize; i != 0; i--)
     {
-    case 0:
+      analogWrite(LEDDAC, L660C);
       digitalWrite(LED660, HIGH);
-      Serial.println(ADC1Ph);
-      delay(500);
-      break;
-    case 1:
+      SENS660[SENS660Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
       digitalWrite(LED660, LOW);
+      analogWrite(LEDDAC, L770C);
       digitalWrite(LED770, HIGH);
-      Serial.println(ADC1Ph);
-      delay(500);
-      break;
-    case 2:
+      SENS770[SENS770Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
       digitalWrite(LED770, LOW);
+      analogWrite(LEDDAC, L810C);
       digitalWrite(LED810, HIGH);
-      Serial.println(ADC1Ph);
-      delay(500);
-      break;
-    case 3:
+      SENS810[SENS810Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
       digitalWrite(LED810, LOW);
+      analogWrite(LEDDAC, L850C);
       digitalWrite(LED850, HIGH);
-      Serial.println(ADC1Ph);
-      delay(500);
-      break;
-    case 4:
+      SENS850[SENS850Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
       digitalWrite(LED850, LOW);
+      analogWrite(LEDDAC, L940C);
       digitalWrite(LED940, HIGH);
-      Serial.println(ADC1Ph);
-      delay(500);
-      break;
-    default:
-      Serial.println("LED test error");
-      break;
+      SENS940[SENS940Index++].volt = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
+      digitalWrite(LED940, LOW);
     }
+    isRunning = false;              // Set the flag to indicate that the sensor task has completed its readings
+    vTaskSuspend(SensorTaskHandle); // Task selfterminates when done
   }
-  analogWrite(DAC1, 0);*/
 }
 
 void Termal(void *param)
@@ -304,14 +289,12 @@ void Termal(void *param)
 
 void setup()
 {
-  Serial.begin(115200);
-
-  IOsetup();
+  Serial.begin(115200); // Initialize serial communication for debugging
+  IOsetup();            // Initialize IO pins
   psramInit();
-
-  SDsetup();
-  TFTsetup();
-  STS3xSetup();
+  SDsetup();    // starts SDcard
+  TFTsetup();   // starts TFT and Touchscreen
+  STS3xSetup(); // starts STS35 sensor
 
   if (psramFound())
   {
@@ -322,7 +305,7 @@ void setup()
     Serial.println("PSram not found");
   }
 
-  delay(1000);
+  delay(100);
 
   SENS660 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
   SENS770 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
@@ -353,8 +336,6 @@ void setup()
       NULL,
       1,
       &TemperatureUpdateTaskHandle);
-
-  Serial.println("LED test begins");
 }
 
 void loop()
