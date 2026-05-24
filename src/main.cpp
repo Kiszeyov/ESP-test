@@ -39,7 +39,7 @@ Guideline only
 #define SD_MISO 13
 
 //========SD speed================
-#define SD_SPEED 40000000U // Max speed for SD card is 80MHz, but it may not work with all SD cards. In case of issues, lower speed to 40000000U (40MHz).
+#define SD_SPEED 80000000U // Max speed for SD card is 80MHz, but it may not work with all SD cards. In case of issues, lower speed to 40000000U (40MHz).
 
 //=======LED CTRL pin=============
 #define LED660 1  // LED 1 - 660nm wavelength
@@ -85,6 +85,8 @@ TaskHandle_t SPO2UpdateTaskHandle = NULL;
 
 const int headnum = 5;
 const String HeadNames[5] = {"LED660", "LED770", "LED810", "LED850", "LED940"};
+
+const float HemCoefficients[5] = {0.0001, 0.0001, 0.0001, 0.0001, 0.0001}; // Placeholder coefficients for Hemoglobin calculation
 
 struct SensorData
 {
@@ -302,14 +304,14 @@ void SPO2Update(void *param)
   {
     analogWrite(LEDDAC, L660C);
     digitalWrite(LED660, HIGH);
-    L660 = (analogRead(ADC1Ph) * ADCRes)/(analogRead(DAC2)*ADCRes); // Convert ADC reading to voltage in mV
+    L660 = (analogRead(ADC1Ph) * ADCRes) / (analogRead(DAC2) * ADCRes); // Convert ADC reading to voltage in mV
     digitalWrite(LED660, LOW);
     analogWrite(LEDDAC, L940C);
     digitalWrite(LED940, HIGH);
-    L940 = (analogRead(ADC1Ph) * ADCRes)/(analogRead(DAC2)*ADCRes); // Convert ADC reading to voltage in mV
+    L940 = (analogRead(ADC1Ph) * ADCRes) / (analogRead(DAC2) * ADCRes); // Convert ADC reading to voltage in mV
     digitalWrite(LED940, LOW);
 
-      // Placeholder for SpO2 calculation logic and display/storage
+    // Placeholder for SpO2 calculation logic and display/storage
 
     vTaskDelay(500 / portTICK_PERIOD_MS); // Delay for 0.5 second before the next update
   }
@@ -376,9 +378,4 @@ void setup()
 
 void loop()
 {
-  if (SensorTaskHandle != NULL)
-  {
-    vTaskResume(SensorTaskHandle); // Resume the sensor task to start reading sensors
-    isRunning = true;              // Set the flag to indicate that the sensor task is running
-  }
 }
