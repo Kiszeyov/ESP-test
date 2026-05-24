@@ -8,7 +8,8 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <XPT2046_Touchscreen.h>
-
+#include <Wire.h>
+#include <SensirionI2cSts3x.h>
 //=========LCD connections========
 /*========DO NOT UNCOMMENT========
 Guideline only
@@ -61,7 +62,15 @@ Guideline only
 
 TFT_eSPI tft = TFT_eSPI();
 
-float ADCRes{0.0008056640625}; // ADC resolution for 12-bit ADC (3.3V / 4096)
+SensirionI2cSts3x Tsensor;
+
+static char errorMessage[64];
+static int16_t error;
+
+const float ADCRes{0.0008056640625}; // ADC resolution for 12-bit ADC (3.3V / 4096)
+bool isRunning = false;              // controls the start and end of the sensor task
+float Ta{0.0};                       // band temperature.
+float Tb{0.0};                       // finger temperature.
 
 XPT2046_Touchscreen ts(CS_PIN, TIRQ_PIN);
 
@@ -69,19 +78,42 @@ SPIClass SD_SPI(HSPI);
 
 File data;
 
-const int headnum = 5;
+TaskHandle_t SensorTaskHandle = NULL;
+TaskHandle_t TemperatureUpdateTaskHandle = NULL;
 
+const int headnum = 5;
 const String HeadNames[7] = {"LED660", "LED770", "LED810", "LED850", "LED940", "SpO2", "tempdiff"};
 
 struct SensorData
 {
   float volt;
-  uint8_t Led;
 };
 
-SensorData *Sensorbuffer = nullptr;
+SensorData *SENS660 = nullptr;
+SensorData *SENS770 = nullptr;
+SensorData *SENS810 = nullptr;
+SensorData *SENS850 = nullptr;
+SensorData *SENS940 = nullptr;
+
 size_t BufferSize = 100;
-size_t BufferIndex = 0;
+size_t SENS660Index = 0;
+size_t SENS770Index = 0;
+size_t SENS810Index = 0;
+size_t SENS850Index = 0;
+size_t SENS940Index = 0;
+
+void IOsetup()
+{
+  pinMode(LED660, OUTPUT);
+  pinMode(LED770, OUTPUT);
+  pinMode(LED810, OUTPUT);
+  pinMode(LED850, OUTPUT);
+  pinMode(LED940, OUTPUT);
+  pinMode(DAC1, OUTPUT);
+  pinMode(DAC2, OUTPUT);
+  pinMode(ADC1Ph, INPUT);
+  pinMode(ADC2T, INPUT);
+}
 
 void SDsetup()
 {
@@ -109,6 +141,31 @@ void TFTsetup()
   ts.begin();
   ts.setRotation(1);
   Serial.println("TS up");
+}
+
+void STS3xSetup()
+{
+  Wire.begin();
+  Tsensor.begin(Wire, STS35_I2C_ADDR_4A);
+
+  Tsensor.stopMeasurement();
+  delay(1);
+  Tsensor.softReset();
+  delay(100);
+  uint16_t aStatusRegister = 0u;
+  error = Tsensor.readStatusRegister(aStatusRegister);
+  if (error != NO_ERROR)
+  {
+    Serial.print("Error trying to execute readStatusRegister(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
+    return;
+  }
+  Serial.print("aStatusRegister: ");
+  Serial.print(aStatusRegister);
+  Serial.println();
+
+  Serial.println("STS3x sensor setup complete");
 }
 
 bool SDCreateFile(const char *path, bool append = false)
@@ -175,9 +232,17 @@ void cvsInit(const char *path, const String &headers, size_t numHeaders)
   Serial.println("CSV file initialized successfully");
 }
 
-void LEDtest()
+void LEDCTRL(void *param)
 {
-  analogWrite(DAC1, 255);
+  for (;;)
+  {
+    if (!isRunning)
+    {
+      vTaskSuspend(SensorTaskHandle); // Task selfterminates when done
+    }
+  }
+
+  /*analogWrite(DAC1, 255);
   for (int i = 0; i < 5; ++i)
   {
     switch (i)
@@ -216,21 +281,37 @@ void LEDtest()
       break;
     }
   }
-  analogWrite(DAC1, 0);
+  analogWrite(DAC1, 0);*/
 }
 
-void LEDdrive()
+void Termal(void *param)
 {
+  for (;;)
+  {
+    error = Tsensor.measureSingleShot(REPEATABILITY_MEDIUM, false, Ta); // Measure temperature from I2C and store in Ta
+    if (error != NO_ERROR)
+    {
+
+      Serial.print("Error trying to execute measureSingleShot(): ");
+      errorToString(error, errorMessage, sizeof errorMessage);
+      Serial.println(errorMessage);
+      return;
+    }
+    Tb = analogRead(ADC2T) * ADCRes * 100.0; // Convert ADC reading to temperature in Celsius // needs tweaking
+    vTaskDelay(500 / portTICK_PERIOD_MS);    // Delay for 1 second before the next measurement
+  }
 }
 
 void setup()
 {
   Serial.begin(115200);
 
+  IOsetup();
   psramInit();
 
   SDsetup();
   TFTsetup();
+  STS3xSetup();
 
   if (psramFound())
   {
@@ -243,17 +324,44 @@ void setup()
 
   delay(1000);
 
-  Sensorbuffer = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
+  SENS660 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
+  SENS770 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
+  SENS810 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
+  SENS850 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
+  SENS940 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
 
-  if (Sensorbuffer == nullptr)
+  if (SENS660 == nullptr || SENS770 == nullptr || SENS810 == nullptr || SENS850 == nullptr || SENS940 == nullptr)
   {
-    Serial.println("Faliure to allocate to PSram");
+    Serial.println("Failure to allocate to PSram");
   }
+
+  // =============================================
+
+  xTaskCreatePinnedToCore(
+      LEDCTRL,
+      "SensorTask",
+      4096,
+      NULL,
+      0,
+      &SensorTaskHandle,
+      0);
+
+  xTaskCreate(
+      Termal,
+      "TemperatureUpdateTask",
+      1000,
+      NULL,
+      1,
+      &TemperatureUpdateTaskHandle);
+
   Serial.println("LED test begins");
 }
 
 void loop()
 {
-
-  LEDtest();
+  if (SensorTaskHandle != NULL)
+  {
+    vTaskResume(SensorTaskHandle); // Resume the sensor task to start reading sensors
+    isRunning = true;              // Set the flag to indicate that the sensor task is running
+  }
 }
