@@ -72,6 +72,8 @@ const float ADCRes{0.8056640625}; // ADC resolution for 12-bit ADC (3.3V / 4096)
 bool isRunning = false;           // controls the start and end of the sensor task
 float Ta{0.0};                    // band temperature.
 float Tb{0.0};                    // finger temperature.
+float SpO2{0.0};                  // blood oxygen saturation level.
+float Hemoglobin{0.0};            // hemoglobin concentration.
 
 XPT2046_Touchscreen ts(CS_PIN, TIRQ_PIN);
 
@@ -146,6 +148,36 @@ void TFTsetup()
   ts.begin();
   ts.setRotation(1);
   Serial.println("TS up");
+}
+
+void processing()
+{ // calculates hem count from sensordata, does not updates sensor readings
+  float R660{0.0};
+  float R940{0.0};
+  float R770{0.0};
+  float R840{0.0};
+  float R810{0.0};
+
+  for (int i = 0; i < BufferSize; ++i)
+  {
+    R660 += SENS660[i].AC / SENS660[i].DC;
+    R940 += SENS940[i].AC / SENS940[i].DC;
+    R770 += SENS770[i].AC / SENS770[i].DC;
+    R840 += SENS850[i].AC / SENS850[i].DC;
+    R810 += SENS810[i].AC / SENS810[i].DC;
+  }
+  R660 /= BufferSize;
+  R940 /= BufferSize;
+  R770 /= BufferSize;
+  R840 /= BufferSize;
+  R810 /= BufferSize;
+
+  R660 /= R810;
+  R940 /= R810;
+  R770 /= R810;
+  R840 /= R810;
+
+  Hemoglobin = HemCoefficients[0] + R660 * HemCoefficients[1] + R770 * HemCoefficients[2] + R840 * HemCoefficients[3] + R940 * HemCoefficients[4]; // Hem count calculations based on documentation
 }
 
 void STS3xSetup()
@@ -241,10 +273,6 @@ void FullTest(void *param)
 {
   for (;;)
   {
-    if (!isRunning)
-    {
-      vTaskSuspend(SensorTaskHandle); // pre check
-    }
     for (int i = BufferSize; i != 0; i--)
     {
       analogWrite(LEDDAC, L660C);
@@ -273,6 +301,7 @@ void FullTest(void *param)
       SENS940[SENS940Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
       digitalWrite(LED940, LOW);
     }
+    processing();                   // Process the collected sensor data to calculate SpO2 and Hemoglobin levels
     isRunning = false;              // Set the flag to indicate that the sensor task has completed its readings
     vTaskSuspend(SensorTaskHandle); // Task selfterminates when done
   }
@@ -326,15 +355,6 @@ void setup()
   TFTsetup();   // starts TFT and Touchscreen
   STS3xSetup(); // starts STS35 sensor
 
-  if (psramFound())
-  {
-    Serial.println("PSram up");
-  }
-  else
-  {
-    Serial.println("PSram not found");
-  }
-
   delay(100);
 
   SENS660 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
@@ -347,6 +367,10 @@ void setup()
   {
     Serial.println("Failure to allocate to PSram");
   }
+
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(0, 0);
 
   // =============================================
 
@@ -374,6 +398,9 @@ void setup()
       NULL,
       1,
       &TemperatureUpdateTaskHandle);
+
+  vTaskSuspend(SensorTaskHandle);     // Start with the sensor task suspended, it will be resumed when needed
+  vTaskSuspend(SPO2UpdateTaskHandle); // Start with the SpO2 update task suspended, it will be resumed when needed
 }
 
 void loop()
