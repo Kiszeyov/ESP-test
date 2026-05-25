@@ -172,12 +172,16 @@ void processing()
   R840 /= BufferSize;
   R810 /= BufferSize;
 
+  Serial.println("AVR SpO2 during reading: " + String(R660 / R940) + "%");
+
   R660 /= R810;
   R940 /= R810;
   R770 /= R810;
   R840 /= R810;
 
   Hemoglobin = HemCoefficients[0] + R660 * HemCoefficients[1] + R770 * HemCoefficients[2] + R840 * HemCoefficients[3] + R940 * HemCoefficients[4]; // Hem count calculations based on documentation
+  Serial.print("Calculated Hemoglobin: ");
+  Serial.println(Hemoglobin);
 }
 
 void STS3xSetup()
@@ -301,6 +305,7 @@ void FullTest(void *param)
       SENS940[SENS940Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
       digitalWrite(LED940, LOW);
     }
+    Serial.println("Sensor readings complete, processing data...");
     processing();                   // Process the collected sensor data to calculate SpO2 and Hemoglobin levels
     isRunning = false;              // Set the flag to indicate that the sensor task has completed its readings
     vTaskSuspend(SensorTaskHandle); // Task selfterminates when done
@@ -321,7 +326,11 @@ void Termal(void *param)
       return;
     }
     Tb = analogRead(ADC2T) * ADCRes * 100.0; // Convert ADC reading to temperature in Celsius // needs tweaking
-    vTaskDelay(500 / portTICK_PERIOD_MS);    // Delay for 0.5 second before the next measurement
+    Serial.print("Arm Temperature: ");
+    Serial.println(Ta);
+    Serial.print("Finger Temperature: ");
+    Serial.println(Tb);
+    vTaskDelay(500 / portTICK_PERIOD_MS); // Delay for 0.5 second before the next measurement
   }
 }
 
@@ -339,7 +348,9 @@ void SPO2Update(void *param)
     digitalWrite(LED940, HIGH);
     L940 = (analogRead(ADC1Ph) * ADCRes) / (analogRead(DAC2) * ADCRes); // Convert ADC reading to voltage in mV
     digitalWrite(LED940, LOW);
-
+    SpO2 = (L660 / L940); // SpO2 calculation based on the ratio of the readings from the 660nm and 940nm LEDs, needs calibration and tweaking based on actual sensor characteristics
+    Serial.print("SpO2: ");
+    Serial.println(SpO2);
     // Placeholder for SpO2 calculation logic and display/storage
 
     vTaskDelay(500 / portTICK_PERIOD_MS); // Delay for 0.5 second before the next update
