@@ -3,10 +3,6 @@
 #include <SD.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <freertos/queue.h>
-#include <freertos/semphr.h>
 #include <XPT2046_Touchscreen.h>
 #include <Wire.h>
 #include <SensirionI2cSts3x.h>
@@ -81,10 +77,6 @@ SPIClass SD_SPI(HSPI);
 
 File data;
 
-TaskHandle_t SensorTaskHandle = NULL;
-TaskHandle_t TemperatureUpdateTaskHandle = NULL;
-TaskHandle_t SPO2UpdateTaskHandle = NULL;
-
 const int headnum = 5;
 const String HeadNames[5] = {"LED660", "LED770", "LED810", "LED850", "LED940"};
 
@@ -108,19 +100,6 @@ size_t SENS770Index = 0;
 size_t SENS810Index = 0;
 size_t SENS850Index = 0;
 size_t SENS940Index = 0;
-
-void IOsetup()
-{
-  pinMode(LED660, OUTPUT);
-  pinMode(LED770, OUTPUT);
-  pinMode(LED810, OUTPUT);
-  pinMode(LED850, OUTPUT);
-  pinMode(LED940, OUTPUT);
-  pinMode(DAC1, OUTPUT);
-  pinMode(DAC2, OUTPUT);
-  pinMode(ADC1Ph, INPUT);
-  pinMode(ADC2T, INPUT);
-}
 
 void SDsetup()
 {
@@ -273,94 +252,9 @@ void cvsInit(const char *path, const String &headers, size_t numHeaders)
   Serial.println("CSV file initialized successfully");
 }
 
-void FullTest(void *param)
-{
-  for (;;)
-  {
-    for (int i = BufferSize; i != 0; i--)
-    {
-      analogWrite(LEDDAC, L660C);
-      digitalWrite(LED660, HIGH);
-      SENS660[SENS660Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
-      SENS660[SENS660Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
-      digitalWrite(LED660, LOW);
-      analogWrite(LEDDAC, L770C);
-      digitalWrite(LED770, HIGH);
-      SENS770[SENS770Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
-      SENS770[SENS770Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
-      digitalWrite(LED770, LOW);
-      analogWrite(LEDDAC, L810C);
-      digitalWrite(LED810, HIGH);
-      SENS810[SENS810Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
-      SENS810[SENS810Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
-      digitalWrite(LED810, LOW);
-      analogWrite(LEDDAC, L850C);
-      digitalWrite(LED850, HIGH);
-      SENS850[SENS850Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
-      SENS850[SENS850Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
-      digitalWrite(LED850, LOW);
-      analogWrite(LEDDAC, L940C);
-      digitalWrite(LED940, HIGH);
-      SENS940[SENS940Index++].AC = analogRead(ADC1Ph) * ADCRes; // Convert ADC reading to voltage in mV
-      SENS940[SENS940Index++].DC = analogRead(DAC2) * ADCRes;   // Convert DAC output to voltage in mV
-      digitalWrite(LED940, LOW);
-    }
-    Serial.println("Sensor readings complete, processing data...");
-    processing();                   // Process the collected sensor data to calculate SpO2 and Hemoglobin levels
-    isRunning = false;              // Set the flag to indicate that the sensor task has completed its readings
-    vTaskSuspend(SensorTaskHandle); // Task selfterminates when done
-  }
-}
-
-void Termal(void *param)
-{
-  for (;;)
-  {
-    error = Tsensor.measureSingleShot(REPEATABILITY_MEDIUM, false, Ta); // Measure temperature from I2C and store in Ta
-    if (error != NO_ERROR)
-    {
-
-      Serial.print("Error trying to execute measureSingleShot(): ");
-      errorToString(error, errorMessage, sizeof errorMessage);
-      Serial.println(errorMessage);
-      return;
-    }
-    Tb = analogRead(ADC2T) * ADCRes * 100.0; // Convert ADC reading to temperature in Celsius // needs tweaking
-    Serial.print("Arm Temperature: ");
-    Serial.println(Ta);
-    Serial.print("Finger Temperature: ");
-    Serial.println(Tb);
-    vTaskDelay(500 / portTICK_PERIOD_MS); // Delay for 0.5 second before the next measurement
-  }
-}
-
-void SPO2Update(void *param)
-{
-  float L660{0.0};
-  float L940{0.0};
-  for (;;)
-  {
-    analogWrite(LEDDAC, L660C);
-    digitalWrite(LED660, HIGH);
-    L660 = (analogRead(ADC1Ph) * ADCRes) / (analogRead(DAC2) * ADCRes); // Convert ADC reading to voltage in mV
-    digitalWrite(LED660, LOW);
-    analogWrite(LEDDAC, L940C);
-    digitalWrite(LED940, HIGH);
-    L940 = (analogRead(ADC1Ph) * ADCRes) / (analogRead(DAC2) * ADCRes); // Convert ADC reading to voltage in mV
-    digitalWrite(LED940, LOW);
-    SpO2 = (L660 / L940); // SpO2 calculation based on the ratio of the readings from the 660nm and 940nm LEDs, needs calibration and tweaking based on actual sensor characteristics
-    Serial.print("SpO2: ");
-    Serial.println(SpO2);
-    // Placeholder for SpO2 calculation logic and display/storage
-
-    vTaskDelay(500 / portTICK_PERIOD_MS); // Delay for 0.5 second before the next update
-  }
-}
-
 void setup()
 {
-  Serial.begin(115200); // Initialize serial communication for debugging
-  IOsetup();            // Initialize IO pins
+  Serial.begin(115200); // Initialize serial communication for debugging          // Initialize IO pins
   psramInit();
   SDsetup();    // starts SDcard
   TFTsetup();   // starts TFT and Touchscreen
@@ -382,36 +276,6 @@ void setup()
   tft.setTextColor(TFT_WHITE);
   tft.setTextSize(2);
   tft.setCursor(0, 0);
-
-  // =============================================
-
-  xTaskCreatePinnedToCore(
-      FullTest,
-      "FullSensorTask",
-      4096,
-      NULL,
-      0,
-      &SensorTaskHandle,
-      0);
-
-  xTaskCreate(
-      SPO2Update,
-      "SPO2UpdateTask",
-      4096,
-      NULL,
-      1,
-      &SPO2UpdateTaskHandle);
-
-  xTaskCreate(
-      Termal,
-      "TemperatureUpdateTask",
-      1000,
-      NULL,
-      1,
-      &TemperatureUpdateTaskHandle);
-
-  vTaskSuspend(SensorTaskHandle);     // Start with the sensor task suspended, it will be resumed when needed
-  vTaskSuspend(SPO2UpdateTaskHandle); // Start with the SpO2 update task suspended, it will be resumed when needed
 }
 
 void loop()
