@@ -6,6 +6,7 @@
 #include <XPT2046_Touchscreen.h>
 #include <Wire.h>
 #include <SensirionI2cSts3x.h>
+#include <time.h>
 //=========LCD connections========
 /*========DO NOT UNCOMMENT========
 Guideline only
@@ -46,9 +47,7 @@ Guideline only
 
 // LED control voltages in binary (0-255) for 8-bit DAC
 const int L660C{128};
-const int L770C{128};
 const int L810C{128};
-const int L850C{128};
 const int L940C{128};
 
 //===========IO pins==============
@@ -64,23 +63,19 @@ SensirionI2cSts3x Tsensor;
 static char errorMessage[64];
 static int16_t error;
 
-const float ADCRes{0.8056640625}; // ADC resolution for 12-bit ADC (3.3V / 4096) in mV
-bool isRunning = false;           // controls the start and end of the sensor task
-float Ta{0.0};                    // band temperature.
-float Tb{0.0};                    // finger temperature.
-float SpO2{0.0};                  // blood oxygen saturation level.
-float Hemoglobin{0.0};            // hemoglobin concentration.
+const float ADCRes{0.0008056640625}; // ADC resolution for 12-bit ADC (3.3V / 4096) in V
+bool isRunning = false;              // controls the start and end of the sensor task
+float Ta{0.0};                       // band temperature.
+float Tb{0.0};                       // finger temperature.
+float SpO2{0.0};                     // blood oxygen saturation level.
+float Hemoglobin{0.0};               // hemoglobin concentration.
+const float matrix[3][2] = {{319.6, 3226.56}, {1214.0, 693.44}, {864.0, 717.08}};
 
 XPT2046_Touchscreen ts(CS_PIN, TIRQ_PIN);
 
 SPIClass SD_SPI(HSPI);
 
 File data;
-
-const int headnum = 5;
-const String HeadNames[5] = {"LED660", "LED770", "LED810", "LED850", "LED940"};
-
-const float HemCoefficients[5] = {0.0001, 0.0001, 0.0001, 0.0001, 0.0001}; // Placeholder coefficients for Hemoglobin calculation
 
 struct SensorData
 {
@@ -89,17 +84,15 @@ struct SensorData
 };
 
 SensorData *SENS660 = nullptr;
-SensorData *SENS770 = nullptr;
 SensorData *SENS810 = nullptr;
-SensorData *SENS850 = nullptr;
 SensorData *SENS940 = nullptr;
 
+hw_timer_t *Timer0_Cfg = NULL;
+
+bool measure = false;
+
 size_t BufferSize = 100;
-size_t SENS660Index = 0;
-size_t SENS770Index = 0;
-size_t SENS810Index = 0;
-size_t SENS850Index = 0;
-size_t SENS940Index = 0;
+size_t Index = 0;
 
 void SDsetup()
 {
@@ -118,6 +111,15 @@ void SDsetup()
   data.close();
 }
 
+void LEDpreset()
+{
+  digitalWrite(LED660, LOW);
+  digitalWrite(LED770, LOW);
+  digitalWrite(LED810, LOW);
+  digitalWrite(LED850, LOW);
+  digitalWrite(LED940, LOW);
+}
+
 void TFTsetup()
 {
   tft.begin();
@@ -127,40 +129,6 @@ void TFTsetup()
   ts.begin();
   ts.setRotation(1);
   Serial.println("TS up");
-}
-
-void processing()
-{ // calculates hem count from sensordata, does not updates sensor readings
-  float R660{0.0};
-  float R940{0.0};
-  float R770{0.0};
-  float R840{0.0};
-  float R810{0.0};
-
-  for (int i = 0; i < BufferSize; ++i)
-  {
-    R660 += SENS660[i].AC / SENS660[i].DC;
-    R940 += SENS940[i].AC / SENS940[i].DC;
-    R770 += SENS770[i].AC / SENS770[i].DC;
-    R840 += SENS850[i].AC / SENS850[i].DC;
-    R810 += SENS810[i].AC / SENS810[i].DC;
-  }
-  R660 /= BufferSize;
-  R940 /= BufferSize;
-  R770 /= BufferSize;
-  R840 /= BufferSize;
-  R810 /= BufferSize;
-
-  Serial.println("AVR SpO2 during reading: " + String(R660 / R940) + "%");
-
-  R660 /= R810;
-  R940 /= R810;
-  R770 /= R810;
-  R840 /= R810;
-
-  Hemoglobin = HemCoefficients[0] + R660 * HemCoefficients[1] + R770 * HemCoefficients[2] + R840 * HemCoefficients[3] + R940 * HemCoefficients[4]; // Hem count calculations based on documentation
-  Serial.print("Calculated Hemoglobin: ");
-  Serial.println(Hemoglobin);
 }
 
 void STS3xSetup()
@@ -188,68 +156,92 @@ void STS3xSetup()
   Serial.println("STS3x sensor setup complete");
 }
 
-bool SDCreateFile(const char *path, bool append = false)
+void DPupdate()
 {
-  File file = SD.open(path, FILE_WRITE);
-  if (!file)
-  {
-    Serial.println("Failed to create file at:" + String(path));
-    return false;
-  }
-  if (append)
-  {
-    file.seek(file.size()); // Move to the end of the file for appending
-  }
-  file.close();
-  Serial.println("File created successfully");
-  return true;
+  tft.print("band temperature(°C): ");
+  tft.println(Ta);
+  tft.setCursor(0, 2);
+  tft.print("finger temperature(°C): ");
+  tft.println(Tb);
+  tft.setCursor(0, 4);
+  tft.print("SpO2(%): ");
+  tft.println(SpO2);
+  tft.setCursor(0, 6);
+  tft.print("Hemoglobin(mg/ml): ");
+  tft.println(Hemoglobin);
+  tft.setCursor(0, 8);
+  tft.println("Tap to end measurement");
+  tft.setCursor(0, 0);
 }
 
-bool SDWriteRawData(const char *path, const String &data)
+void Tread()
 {
-  File file = SD.open(path, FILE_WRITE);
-  if (!file)
+  error = Tsensor.measureSingleShot(REPEATABILITY_MEDIUM, false, Ta);
+  if (error != NO_ERROR)
   {
-    Serial.println("Failed to open file for writing at:" + String(path));
-    return false;
-  }
-  file.println(data);
-  file.close();
-  Serial.println("Data written successfully");
-  return true;
-}
-
-String SDReadData(const char *path)
-{
-  File file = SD.open(path, FILE_READ);
-  if (!file)
-  {
-    Serial.println("Failed to open file for reading at:" + String(path));
-    return "";
-  }
-  String content = file.readString();
-  file.close();
-  return content;
-}
-
-void cvsInit(const char *path, const String &headers, size_t numHeaders)
-{
-  if (!SDCreateFile(path))
-  {
-    Serial.println("Failed to create CSV file");
+    Serial.print("Error trying to execute measureSingleShot(): ");
+    errorToString(error, errorMessage, sizeof errorMessage);
+    Serial.println(errorMessage);
     return;
   }
-  String headerLine;
-  for (size_t i = 0; i < numHeaders; ++i)
+  Tb = analogRead(ADC2T) * ADCRes / 1000.0; // Convert ADC reading to voltage and then to temperature
+}
+
+void IRAM_ATTR Timer0_ISR()
+{
+  if (measure)
   {
-    headerLine += headers + (i < numHeaders - 1 ? "," : "");
+    digitalWrite(LED660, HIGH);
+    analogWrite(LEDDAC, L660C);
+    SENS660[Index].AC = analogRead(ADC1Ph);
+    SENS660[Index].DC = analogRead(DAC2);
+    digitalWrite(LED660, LOW);
+    analogWrite(LEDDAC, L810C);
+    digitalWrite(LED810, HIGH);
+    SENS810[Index].AC = analogRead(ADC1Ph);
+    SENS810[Index].DC = analogRead(DAC2);
+    digitalWrite(LED810, LOW);
+    analogWrite(LEDDAC, L940C);
+    digitalWrite(LED940, HIGH);
+    SENS940[Index].AC = analogRead(ADC1Ph);
+    SENS940[Index].DC = analogRead(DAC2);
+    Index++;
+    digitalWrite(LED940, LOW);
   }
-  if (!SDWriteRawData(path, headerLine))
+}
+
+void DCFilter()
+{
+  int DIndex = Index;
+  DIndex = Index;
+  if (DIndex > 1)
   {
-    Serial.println("Failed to write CSV headers");
-    return;
+    SENS660[DIndex].DC = 0.7 * SENS660[DIndex - 1].DC + 0.3 * SENS660[DIndex].DC;
+    SENS810[DIndex].DC = 0.7 * SENS810[DIndex - 1].DC + 0.3 * SENS810[DIndex].DC;
+    SENS940[DIndex].DC = 0.7 * SENS940[DIndex - 1].DC + 0.3 * SENS940[DIndex].DC;
   }
-  Serial.println("CSV file initialized successfully");
+}
+
+void HBcalc(float R660, float R810, float R940)
+{
+  // placeholder
+}
+
+void calc()
+{
+  int Lindex = Index - 6;
+  if (Lindex > 0)
+  {
+    float R660 = abs(SENS660[Lindex].AC / (SENS660[Lindex].DC - 2.5));
+    float R810 = abs(SENS810[Lindex].AC / (SENS810[Lindex].DC - 2.5));
+    float R940 = abs(SENS940[Lindex].AC / (SENS940[Lindex].DC - 2.5));
+    float RSpO2 = R660 / R940;
+
+    SpO2 = 120 - 20 * RSpO2;
+
+    HBcalc(R660, R810, R940);
+  }
+  Lindex = Index;
 }
 
 void setup()
@@ -263,21 +255,38 @@ void setup()
   delay(100);
 
   SENS660 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
-  SENS770 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
   SENS810 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
-  SENS850 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
   SENS940 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
 
-  if (SENS660 == nullptr || SENS770 == nullptr || SENS810 == nullptr || SENS850 == nullptr || SENS940 == nullptr)
+  if (SENS660 == nullptr || SENS810 == nullptr || SENS940 == nullptr)
   {
     Serial.println("Failure to allocate to PSram");
   }
 
+  pinMode(TIRQ_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(TIRQ_PIN), []()
+                  { !measure; }, FALLING);
+
+  Timer0_Cfg = timerBegin(0, 80, true);
+  timerAttachInterrupt(Timer0_Cfg, &Timer0_ISR, true);
+  timerAlarmWrite(Timer0_Cfg, 10000, true);
+  timerAlarmEnable(Timer0_Cfg);
+
   tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(2);
+  tft.setTextSize(4);
   tft.setCursor(0, 0);
+  tft.println("Tap to begin measurement!");
+
+  LEDpreset();
 }
 
 void loop()
 {
+  if (measure)
+  {
+    DPupdate();
+    Tread();
+    DCFilter();
+    calc();
+  }
 }
