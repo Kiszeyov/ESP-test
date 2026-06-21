@@ -4,6 +4,7 @@
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
+#include <freertos/task.h>
 #include <Wire.h>
 #include <SensirionI2cSts3x.h>
 #include <time.h>
@@ -39,11 +40,11 @@ Guideline only
 #define SD_SPEED 80000000U // Max speed for SD card is 80MHz, but it may not work with all SD cards. In case of issues, lower speed to 40000000U (40MHz).
 
 //=======LED CTRL pin=============
-#define LED660 1  // LED 1 - 660nm wavelength
+#define LED660 3  // LED 1 - 660nm wavelength
 #define LED770 3  // LED 2 - 770nm wavelength
-#define LED810 12 // LED 3 - 810nm wavelength
+#define LED810 2 // LED 3 - 810nm wavelength
 #define LED850 13 // LED 4 - 850nm wavelength
-#define LED940 26 // LED 5 - 940nm wavelength
+#define LED940 1 // LED 5 - 940nm wavelength
 
 // LED control voltages in binary (0-255) for 8-bit DAC
 const int L660C{128};
@@ -69,13 +70,13 @@ float Ta{0.0};                       // band temperature.
 float Tb{0.0};                       // finger temperature.
 float SpO2{0.0};                     // blood oxygen saturation level.
 float Hemoglobin{0.0};               // hemoglobin concentration.
-const float matrix[3][2] = {{319.6, 3226.56}, {1214.0, 693.44}, {864.0, 717.08}};
+const float matrix[2][3] = {{-0.0000216869, 0.000597656, 0.000397867}, {0.000330283, -0.0000697138, -0.0000240794}};
 
 XPT2046_Touchscreen ts(CS_PIN, TIRQ_PIN);
 
-SPIClass SD_SPI(HSPI);
-
 File data;
+
+hw_timer_t *Timer0_Cfg = NULL;
 
 struct SensorData
 {
@@ -87,38 +88,14 @@ SensorData *SENS660 = nullptr;
 SensorData *SENS810 = nullptr;
 SensorData *SENS940 = nullptr;
 
-hw_timer_t *Timer0_Cfg = NULL;
 
-bool measure = false;
+
+bool measure = true;
 
 size_t BufferSize = 100;
 size_t Index = 0;
 
-void SDsetup()
-{
-  if (!SD.begin(SD_CS, SD_SPI, SD_SPEED))
-  {
-    Serial.println("SD init fail.");
-  }
-  data = SD.open("/test.txt", FILE_WRITE);
-  if (!data)
-  {
-    Serial.println("SD write failed");
-    return;
-  }
-  data.println("Hello there!");
-  Serial.println("SD write succesful");
-  data.close();
-}
 
-void LEDpreset()
-{
-  digitalWrite(LED660, LOW);
-  digitalWrite(LED770, LOW);
-  digitalWrite(LED810, LOW);
-  digitalWrite(LED850, LOW);
-  digitalWrite(LED940, LOW);
-}
 
 void TFTsetup()
 {
@@ -131,7 +108,7 @@ void TFTsetup()
   Serial.println("TS up");
 }
 
-void STS3xSetup()
+/*void STS3xSetup()
 {
   Wire.begin();
   Tsensor.begin(Wire, STS35_I2C_ADDR_4A);
@@ -154,40 +131,51 @@ void STS3xSetup()
   Serial.println();
 
   Serial.println("STS3x sensor setup complete");
-}
+}*/
 
-void DPupdate()
+/*void DPupdate()
 {
-  tft.print("band temperature(°C): ");
-  tft.println(Ta);
-  tft.setCursor(0, 2);
-  tft.print("finger temperature(°C): ");
-  tft.println(Tb);
-  tft.setCursor(0, 4);
-  tft.print("SpO2(%): ");
-  tft.println(SpO2);
-  tft.setCursor(0, 6);
-  tft.print("Hemoglobin(mg/ml): ");
-  tft.println(Hemoglobin);
-  tft.setCursor(0, 8);
-  tft.println("Tap to end measurement");
-  tft.setCursor(0, 0);
-}
+  
+    
 
+}*/
+
+void DPupdate( void * pvParameters){
+  Serial.println("Task created and started");
+  for (;;){
+    Serial.print("band temperature(°C): ");
+      Serial.println(Ta);
+    // Serial.setCursor(0, 2);
+      Serial.print("finger temperature(°C): ");
+      Serial.println(Tb);
+      //Serial.setCursor(0, 4);
+      Serial.print("SpO2(%): ");
+      Serial.println(SpO2);
+    // Serial.setCursor(0, 6);
+      Serial.print("Hemoglobin(g/dl): ");
+      Serial.println(Hemoglobin);
+      //Serial.setCursor(0, 8);
+      Serial.println("Tap to end measurement");
+      // Serial.setCursor(0, 0);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+
+  }
+}
 void Tread()
 {
-  error = Tsensor.measureSingleShot(REPEATABILITY_MEDIUM, false, Ta);
+  /*error = Tsensor.measureSingleShot(REPEATABILITY_MEDIUM, false, Ta);
   if (error != NO_ERROR)
   {
     Serial.print("Error trying to execute measureSingleShot(): ");
     errorToString(error, errorMessage, sizeof errorMessage);
     Serial.println(errorMessage);
     return;
-  }
+  }*/
   Tb = analogRead(ADC2T) * ADCRes / 1000.0; // Convert ADC reading to voltage and then to temperature
 }
 
-void IRAM_ATTR Timer0_ISR()
+void test()
 {
   if (measure)
   {
@@ -224,7 +212,13 @@ void DCFilter()
 
 void HBcalc(float R660, float R810, float R940)
 {
-  // placeholder
+float Hemo1;float Hemo2;
+
+Hemo1 = (R660 * matrix[1][1])+(R940 * matrix[1][2])+(R810 * matrix[1][3]);
+Hemo2 = (R660 * matrix[2][1])+(R940 * matrix[2][2])+(R810 * matrix[2][3]);
+
+Hemoglobin =  ((Hemo1*5.5)+Hemo2)+10000;
+
 }
 
 void calc()
@@ -240,23 +234,33 @@ void calc()
     SpO2 = 120 - 20 * RSpO2;
 
     HBcalc(R660, R810, R940);
+    if (Index >= 98) {
+      Index =0;
+    }
   }
   Lindex = Index;
 }
+uint currentMillis {0};
+void IRAM_ATTR Timer0_ISR()
+{
+    currentMillis++;
+}
+
+
+TaskHandle_t Task1 = NULL;
 
 void setup()
 {
   Serial.begin(115200); // Initialize serial communication for debugging          // Initialize IO pins
-  psramInit();
-  SDsetup();    // starts SDcard
-  TFTsetup();   // starts TFT and Touchscreen
-  STS3xSetup(); // starts STS35 sensor
 
+ // SDsetup();    // starts SDcard
+  TFTsetup();   // starts TFT and Touchscreen
+  //STS3xSetup(); // starts STS35 sensor
   delay(100);
 
-  SENS660 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
-  SENS810 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
-  SENS940 = (SensorData *)ps_malloc(BufferSize * sizeof(SensorData));
+  SENS660 = (SensorData *)malloc(BufferSize * sizeof(SensorData));
+  SENS810 = (SensorData *)malloc(BufferSize * sizeof(SensorData));
+  SENS940 = (SensorData *)malloc(BufferSize * sizeof(SensorData));
 
   if (SENS660 == nullptr || SENS810 == nullptr || SENS940 == nullptr)
   {
@@ -268,25 +272,37 @@ void setup()
                   { !measure; }, FALLING);
 
   Timer0_Cfg = timerBegin(0, 80, true);
-  timerAttachInterrupt(Timer0_Cfg, &Timer0_ISR, true);
-  timerAlarmWrite(Timer0_Cfg, 10000, true);
-  timerAlarmEnable(Timer0_Cfg);
+    timerAttachInterrupt(Timer0_Cfg, &Timer0_ISR, true);
+    timerAlarmWrite(Timer0_Cfg, 1000, true);
+    timerAlarmEnable(Timer0_Cfg);
 
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(4);
-  tft.setCursor(0, 0);
-  tft.println("Tap to begin measurement!");
+  xTaskCreate(
+      DPupdate,
+      "DPupdate",
+      8192,
+      NULL,
+      1,
+    &Task1);
 
-  LEDpreset();
+    tft.fillScreen(TFT_BLACK);
+
 }
+
 
 void loop()
 {
+  
   if (measure)
   {
-    DPupdate();
+    /*uint PreviousMillis {0} ;
+  if (currentMillis-PreviousMillis > 250 ) {
+     PreviousMillis = currentMillis;
+     Serial.println(PreviousMillis);
+     DPupdate();
+    }*/
     Tread();
     DCFilter();
     calc();
+    test();
   }
 }
