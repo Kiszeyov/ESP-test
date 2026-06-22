@@ -40,16 +40,14 @@ Guideline only
 #define SD_SPEED 80000000U // Max speed for SD card is 80MHz, but it may not work with all SD cards. In case of issues, lower speed to 40000000U (40MHz).
 
 //=======LED CTRL pin=============
-#define LED660 3  // LED 1 - 660nm wavelength
-#define LED770 3  // LED 2 - 770nm wavelength
-#define LED810 2 // LED 3 - 810nm wavelength
-#define LED850 13 // LED 4 - 850nm wavelength
-#define LED940 1 // LED 5 - 940nm wavelength
+#define LED660 32 // LED 1 - 660nm wavelength
+#define LED810 33 // LED 3 - 810nm wavelength
+#define LED940 2 // LED 5 - 940nm wavelength
 
 // LED control voltages in binary (0-255) for 8-bit DAC
-const int L660C{128};
-const int L810C{128};
-const int L940C{128};
+const int L660C{254};
+const int L810C{254};
+const int L940C{254};
 
 //===========IO pins==============
 #define LEDDAC 25
@@ -65,7 +63,6 @@ static char errorMessage[64];
 static int16_t error;
 
 const float ADCRes{0.0008056640625}; // ADC resolution for 12-bit ADC (3.3V / 4096) in V
-bool isRunning = false;              // controls the start and end of the sensor task
 float Ta{0.0};                       // band temperature.
 float Tb{0.0};                       // finger temperature.
 float SpO2{0.0};                     // blood oxygen saturation level.
@@ -90,8 +87,6 @@ SensorData *SENS940 = nullptr;
 
 
 
-bool measure = true;
-
 size_t BufferSize = 100;
 size_t Index = 0;
 
@@ -100,8 +95,9 @@ size_t Index = 0;
 void TFTsetup()
 {
   tft.begin();
-  tft.setRotation(1);
+  tft.setRotation(3);
   tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE);
   Serial.println("TFT up");
   ts.begin();
   ts.setRotation(1);
@@ -139,25 +135,37 @@ void TFTsetup()
     
 
 }*/
+int LastIndex {0};
+void filter(int NewIndex){
+  if (LastIndex != NewIndex) {
+    LastIndex = NewIndex;
+    if (LastIndex > 2 & LastIndex < 99) {
+      SENS660[LastIndex-1].DC = ( SENS660[LastIndex-2].DC + SENS660[LastIndex-1].DC + SENS660[LastIndex].DC ) / 3;
+      SENS810[LastIndex-1].DC = ( SENS810[LastIndex-2].DC + SENS810[LastIndex-1].DC + SENS810[LastIndex].DC ) / 3;
+      SENS940[LastIndex-1].DC = ( SENS940[LastIndex-2].DC + SENS940[LastIndex-1].DC + SENS940[LastIndex].DC ) / 3;
+    }
+  }
+}
 
 void DPupdate( void * pvParameters){
   Serial.println("Task created and started");
   for (;;){
-    Serial.print("band temperature(°C): ");
-      Serial.println(Ta);
-    // Serial.setCursor(0, 2);
-      Serial.print("finger temperature(°C): ");
-      Serial.println(Tb);
-      //Serial.setCursor(0, 4);
-      Serial.print("SpO2(%): ");
-      Serial.println(SpO2);
-    // Serial.setCursor(0, 6);
-      Serial.print("Hemoglobin(g/dl): ");
-      Serial.println(Hemoglobin);
-      //Serial.setCursor(0, 8);
-      Serial.println("Tap to end measurement");
-      // Serial.setCursor(0, 0);
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
+    tft.fillScreen(TFT_BLACK);
+    tft.print("band temperature(°C): ");
+    tft.println(Ta);
+    tft.setCursor(0, 10);
+    tft.print("finger temperature(°C): ");
+    tft.println(Tb);
+    tft.setCursor(0, 19);
+    tft.print("SpO2(%): ");
+    tft.println(SpO2);
+    tft.setCursor(0, 38);
+    tft.print("Hemoglobin(g/dl): ");
+    tft.println(Hemoglobin);
+    tft.setCursor(0, 47);
+    tft.println("Tap to end measurement");
+    tft.setCursor(0, 0);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
 
 
   }
@@ -172,43 +180,35 @@ void Tread()
     Serial.println(errorMessage);
     return;
   }*/
-  Tb = analogRead(ADC2T) * ADCRes / 1000.0; // Convert ADC reading to voltage and then to temperature
+  Tb = analogRead(ADC2T) * ADCRes; // Convert ADC reading to voltage and then to temperature
 }
 
-void test()
+void test(void * pvParameter)
 {
-  if (measure)
-  {
-    digitalWrite(LED660, HIGH);
-    analogWrite(LEDDAC, L660C);
-    SENS660[Index].AC = analogRead(ADC1Ph);
-    SENS660[Index].DC = analogRead(DAC2);
-    digitalWrite(LED660, LOW);
-    analogWrite(LEDDAC, L810C);
-    digitalWrite(LED810, HIGH);
-    SENS810[Index].AC = analogRead(ADC1Ph);
-    SENS810[Index].DC = analogRead(DAC2);
-    digitalWrite(LED810, LOW);
-    analogWrite(LEDDAC, L940C);
-    digitalWrite(LED940, HIGH);
-    SENS940[Index].AC = analogRead(ADC1Ph);
-    SENS940[Index].DC = analogRead(DAC2);
-    Index++;
-    digitalWrite(LED940, LOW);
+  for (;;){
+      digitalWrite(LED660, HIGH);
+      analogWrite(LEDDAC, L660C);
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      SENS660[Index].AC = analogRead(ADC1Ph);
+      SENS660[Index].DC = analogRead(DAC2);
+      digitalWrite(LED660, LOW);
+      analogWrite(LEDDAC, L810C);
+      digitalWrite(LED810, HIGH);
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      SENS810[Index].AC = analogRead(ADC1Ph);
+      SENS810[Index].DC = analogRead(DAC2);
+      digitalWrite(LED810, LOW);
+      analogWrite(LEDDAC, L940C);
+      digitalWrite(LED940, HIGH);
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      SENS940[Index].AC = analogRead(ADC1Ph);
+      SENS940[Index].DC = analogRead(DAC2);
+      Index++;
+      digitalWrite(LED940, LOW);
+    
   }
 }
 
-void DCFilter()
-{
-  int DIndex = Index;
-  DIndex = Index;
-  if (DIndex > 1)
-  {
-    SENS660[DIndex].DC = 0.7 * SENS660[DIndex - 1].DC + 0.3 * SENS660[DIndex].DC;
-    SENS810[DIndex].DC = 0.7 * SENS810[DIndex - 1].DC + 0.3 * SENS810[DIndex].DC;
-    SENS940[DIndex].DC = 0.7 * SENS940[DIndex - 1].DC + 0.3 * SENS940[DIndex].DC;
-  }
-}
 
 void HBcalc(float R660, float R810, float R940)
 {
@@ -217,7 +217,7 @@ float Hemo1;float Hemo2;
 Hemo1 = (R660 * matrix[1][1])+(R940 * matrix[1][2])+(R810 * matrix[1][3]);
 Hemo2 = (R660 * matrix[2][1])+(R940 * matrix[2][2])+(R810 * matrix[2][3]);
 
-Hemoglobin =  ((Hemo1*5.5)+Hemo2)+10000;
+Hemoglobin =  (Hemo1+Hemo2)*1000;
 
 }
 
@@ -226,12 +226,12 @@ void calc()
   int Lindex = Index - 6;
   if (Lindex > 0)
   {
-    float R660 = abs(SENS660[Lindex].AC / (SENS660[Lindex].DC - 2.5));
-    float R810 = abs(SENS810[Lindex].AC / (SENS810[Lindex].DC - 2.5));
-    float R940 = abs(SENS940[Lindex].AC / (SENS940[Lindex].DC - 2.5));
+    float R660 = abs(SENS660[Lindex].AC / (SENS660[Lindex].DC - 1.6));
+    float R810 = abs(SENS810[Lindex].AC / (SENS810[Lindex].DC - 1.6));
+    float R940 = abs(SENS940[Lindex].AC / (SENS940[Lindex].DC - 1.6));
     float RSpO2 = R660 / R940;
 
-    SpO2 = 120 - 20 * RSpO2;
+    SpO2 = 110 - 20 * RSpO2;
 
     HBcalc(R660, R810, R940);
     if (Index >= 98) {
@@ -240,12 +240,6 @@ void calc()
   }
   Lindex = Index;
 }
-uint currentMillis {0};
-void IRAM_ATTR Timer0_ISR()
-{
-    currentMillis++;
-}
-
 
 TaskHandle_t Task1 = NULL;
 
@@ -267,15 +261,6 @@ void setup()
     Serial.println("Failure to allocate to PSram");
   }
 
-  pinMode(TIRQ_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(TIRQ_PIN), []()
-                  { !measure; }, FALLING);
-
-  Timer0_Cfg = timerBegin(0, 80, true);
-    timerAttachInterrupt(Timer0_Cfg, &Timer0_ISR, true);
-    timerAlarmWrite(Timer0_Cfg, 1000, true);
-    timerAlarmEnable(Timer0_Cfg);
-
   xTaskCreate(
       DPupdate,
       "DPupdate",
@@ -284,25 +269,27 @@ void setup()
       1,
     &Task1);
 
-    tft.fillScreen(TFT_BLACK);
+  xTaskCreate(
+      test,
+      "sensor read",
+      16384,
+      NULL,
+      1,
+    &Task1);
 
+  
+    pinMode(LED660,OUTPUT);
+    digitalWrite(LED660,LOW);
+    pinMode(LED810,OUTPUT);
+    digitalWrite(LED810,LOW);
+    pinMode(LED940,OUTPUT);
+    digitalWrite(LED940,LOW);
 }
 
 
 void loop()
 {
-  
-  if (measure)
-  {
-    /*uint PreviousMillis {0} ;
-  if (currentMillis-PreviousMillis > 250 ) {
-     PreviousMillis = currentMillis;
-     Serial.println(PreviousMillis);
-     DPupdate();
-    }*/
     Tread();
-    DCFilter();
+    filter(Index);
     calc();
-    test();
-  }
 }
