@@ -135,17 +135,6 @@ void TFTsetup()
     
 
 }*/
-int LastIndex {0};
-void filter(int NewIndex){
-  if (LastIndex != NewIndex) {
-    LastIndex = NewIndex;
-    if (LastIndex > 2 & LastIndex < 99) {
-      SENS660[LastIndex-1].DC = ( SENS660[LastIndex-2].DC + SENS660[LastIndex-1].DC + SENS660[LastIndex].DC ) / 3;
-      SENS810[LastIndex-1].DC = ( SENS810[LastIndex-2].DC + SENS810[LastIndex-1].DC + SENS810[LastIndex].DC ) / 3;
-      SENS940[LastIndex-1].DC = ( SENS940[LastIndex-2].DC + SENS940[LastIndex-1].DC + SENS940[LastIndex].DC ) / 3;
-    }
-  }
-}
 
 void DPupdate( void * pvParameters){
   Serial.println("Task created and started");
@@ -191,6 +180,7 @@ void test(void * pvParameter)
       vTaskDelay(100 / portTICK_PERIOD_MS);
       SENS660[Index].AC = analogRead(ADC1Ph);
       SENS660[Index].DC = analogRead(DAC2);
+      Serial.println(SENS660[Index].DC);
       digitalWrite(LED660, LOW);
       analogWrite(LEDDAC, L810C);
       digitalWrite(LED810, HIGH);
@@ -245,7 +235,7 @@ TaskHandle_t Task1 = NULL;
 
 void setup()
 {
-  Serial.begin(115200); // Initialize serial communication for debugging          // Initialize IO pins
+  Serial.begin(115200);
 
  // SDsetup();    // starts SDcard
   TFTsetup();   // starts TFT and Touchscreen
@@ -258,7 +248,7 @@ void setup()
 
   if (SENS660 == nullptr || SENS810 == nullptr || SENS940 == nullptr)
   {
-    Serial.println("Failure to allocate to PSram");
+    Serial.println("Failure to allocate");
   }
 
   xTaskCreate(
@@ -290,6 +280,5 @@ void setup()
 void loop()
 {
     Tread();
-    filter(Index);
     calc();
 }
